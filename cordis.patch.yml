@@ -1,0 +1,9 @@
+- insert:
+    - id: dsh-liangwenfeng-moment
+      name: dsh-liangwenfeng-moment
+      config:
+        enabled: true
+        timezone: Asia/Shanghai
+        weekendValley: true
+        valleyStart: "00:30"
+        valleyEnd: "08:30"

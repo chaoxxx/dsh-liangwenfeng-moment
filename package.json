@@ -1,0 +1,49 @@
+{
+  "name": "dsh-liangwenfeng-moment",
+  "version": "0.1.0",
+  "description": "对话窗口右下角模型切换处实时显示 DeepSeek 波峰/波谷时刻：波峰显示【梁文锋时刻】，波谷显示【梁文谷时刻】。",
+  "author": "hdbzq",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./wave": "./src/wave.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.1"
+  },
+  "dsh": {
+    "client": {
+      "inject": [],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "test": "node --test test/"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "liangwenfeng",
+    "wave",
+    "peak",
+    "valley"
+  ]
+}
