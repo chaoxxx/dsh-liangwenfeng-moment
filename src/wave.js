@@ -1,11 +1,14 @@
 /**
  * dsh-liangwenfeng-moment — 波峰/波谷相位引擎（纯函数，浏览器/Node 通用）。
  *
- * “波峰/波谷”沿用 DeepSeek API 峰谷计价时段的口径：
+ * “波峰/波谷”沿用 DeepSeek API 峰谷计价时段的口径（以 DeepSeek 官网公告为准）：
  *   - 波峰（高峰计价）→ 【梁文锋时刻】
- *   - 波谷（低谷计价）→ 【梁文谷时刻】
- * 默认按北京时间：工作日低谷窗口 valleyStart～valleyEnd，其余为高峰；
- * 周末默认全天低谷（DeepSeek 周末统一按低谷价计费的规则）。
+ *   - 波谷（低谷/空闲计价）→ 【梁文谷时刻】
+ *
+ * 真实规则（北京时间）：
+ *   - 高峰时段：周一至周五 09:00–12:00、14:00–18:00（其余时间均为空闲时段）；
+ *   - 空闲时段价格为高峰时段价格的一半；
+ *   - 周末全天按空闲（波谷）计费。
  * 所有时段均可通过配置调整。
  */
 
@@ -13,9 +16,11 @@ export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Shanghai',
   /** 周末是否全天按低谷（波谷）处理。 */
   weekendValley: true,
-  /** 工作日低谷窗口起止（北京时间 HH:mm）。窗口外为高峰。 */
-  valleyStart: '00:30',
-  valleyEnd: '08:30',
+  /**
+   * 高峰（波峰）时段窗口（北京时间 HH:mm，[start, end)）。
+   * DeepSeek 官网口径：工作日 09:00–12:00、14:00–18:00。
+   */
+  peakWindows: [['09:00', '12:00'], ['14:00', '18:00']],
   labels: {
     peak: '梁文锋时刻',
     valley: '梁文谷时刻',
@@ -59,17 +64,23 @@ export function hmToMinutes(value) {
   return hours * 60 + minutes
 }
 
+/** minutes 是否落在 [startMinute, endMinute) 内（支持跨午夜窗口）。 */
+function inWindow(minutes, startMinute, endMinute) {
+  return startMinute <= endMinute
+    ? minutes >= startMinute && minutes < endMinute
+    : minutes >= startMinute || minutes < endMinute
+}
+
 function mergeConfig(config = {}) {
   return {
     timezone: config.timezone ?? DEFAULTS.timezone,
     weekendValley: config.weekendValley ?? DEFAULTS.weekendValley,
-    valleyStart: config.valleyStart ?? DEFAULTS.valleyStart,
-    valleyEnd: config.valleyEnd ?? DEFAULTS.valleyEnd,
+    peakWindows: config.peakWindows ?? DEFAULTS.peakWindows,
     labels: { ...DEFAULTS.labels, ...(config.labels ?? {}) },
   }
 }
 
-/** 计算某一时刻的相位。返回 { kind, label, weekend, weekday, minutes, ... } */
+/** 计算某一时刻的相位。返回 { kind, label, weekend, weekday, minutes, peakWindows } */
 export function phaseAt(date = new Date(), config = {}) {
   const cfg = mergeConfig(config)
   const shifted = new Date(date.getTime() + timezoneShiftMs(date, cfg.timezone))
@@ -77,26 +88,25 @@ export function phaseAt(date = new Date(), config = {}) {
   const minutes = shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
   const weekend = dow === 0 || dow === 6
 
-  let valley
+  let peak
   if (weekend && cfg.weekendValley) {
-    valley = true
+    peak = false
   } else {
-    const start = hmToMinutes(cfg.valleyStart)
-    const end = hmToMinutes(cfg.valleyEnd)
-    valley = start <= end
-      ? minutes >= start && minutes < end
-      : minutes >= start || minutes < end
+    peak = cfg.peakWindows.some(([startText, endText]) => {
+      const start = hmToMinutes(startText)
+      const end = hmToMinutes(endText)
+      return inWindow(minutes, start, end)
+    })
   }
 
-  const kind = valley ? 'valley' : 'peak'
+  const kind = peak ? 'peak' : 'valley'
   return {
     kind,
     label: cfg.labels[kind],
     weekend,
     weekday: (dow + 6) % 7 + 1, // 1=周一 … 7=周日
     minutes,
-    valleyStart: cfg.valleyStart,
-    valleyEnd: cfg.valleyEnd,
+    peakWindows: cfg.peakWindows,
   }
 }
 
@@ -109,10 +119,13 @@ export function bracketText(phaseOrLabel) {
 /** 人类可读的当前规则描述（tooltip 使用）。 */
 export function describe(config = {}) {
   const cfg = mergeConfig(config)
-  const windowDesc = cfg.weekendValley
-    ? `${cfg.valleyStart}–${cfg.valleyEnd} 低谷，其余高峰；周末全天低谷`
-    : `${cfg.valleyStart}–${cfg.valleyEnd} 低谷，其余高峰`
-  return `DeepSeek 峰谷计价（${cfg.timezone}）：${windowDesc}`
+  const windowDesc = cfg.peakWindows
+    .map(([start, end]) => `${start}–${end}`)
+    .join('、')
+  const dayDesc = cfg.weekendValley
+    ? `工作日高峰 ${windowDesc}，其余空闲（半价）；周末全天空闲`
+    : `高峰 ${windowDesc}，其余空闲（半价）`
+  return `DeepSeek 峰谷计价（${cfg.timezone}）：${dayDesc}`
 }
 
 function localDayKey(date, cfg) {
@@ -124,11 +137,22 @@ function localDayKey(date, cfg) {
   }
 }
 
-/** 计算下一个相位切换时刻。返回 { at: Date, nextKind }；3 天内找不到返回 null。 */
+/** 收集一天内所有可能发生相位切换的“本地分钟”候选点（升序去重）。 */
+function boundaryMinutes(cfg) {
+  const set = new Set([0])
+  for (const [startText, endText] of cfg.peakWindows) {
+    set.add(hmToMinutes(startText))
+    set.add(hmToMinutes(endText))
+  }
+  return [...set].sort((a, b) => a - b)
+}
+
+/** 计算下一个相位切换时刻。返回 { at: Date, nextKind }；找不到返回 null。 */
 export function nextTransition(date = new Date(), config = {}) {
   const cfg = mergeConfig(config)
   const nowPhase = phaseAt(date, cfg)
   const today = localDayKey(date, cfg)
+  const minutesList = boundaryMinutes(cfg)
   const candidates = []
   for (let dayOffset = 0; dayOffset <= 3; dayOffset += 1) {
     const probe = new Date(Date.UTC(today.year, today.month, today.day + dayOffset, 12))
@@ -136,7 +160,7 @@ export function nextTransition(date = new Date(), config = {}) {
     const midnightUtc = Date.UTC(dayKey.year, dayKey.month, dayKey.day)
     const offset = timezoneShiftMs(new Date(midnightUtc), cfg.timezone)
     const dayStart = midnightUtc - offset
-    for (const minute of new Set([0, hmToMinutes(cfg.valleyStart), hmToMinutes(cfg.valleyEnd)])) {
+    for (const minute of minutesList) {
       candidates.push(new Date(dayStart + minute * 60000))
     }
   }
@@ -153,14 +177,15 @@ export function nextTransition(date = new Date(), config = {}) {
 
 /** 距下一次切换的人类可读描述，如 “距低谷切换还有 03:12:05”。 */
 export function countdownText(date = new Date(), config = {}) {
-  const transition = nextTransition(date, config)
+  const cfg = mergeConfig(config)
+  const transition = nextTransition(date, cfg)
   if (!transition) return ''
   const diffMs = Math.max(0, transition.at.getTime() - date.getTime())
   const total = Math.floor(diffMs / 1000)
   const hh = String(Math.floor(total / 3600)).padStart(2, '0')
   const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0')
   const ss = String(total % 60).padStart(2, '0')
-  const nextLabel = DEFAULTS.labels[transition.nextKind]
+  const nextLabel = cfg.labels[transition.nextKind]
   return `距【${nextLabel}】还有 ${hh}:${mm}:${ss}`
 }
 

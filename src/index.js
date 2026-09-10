@@ -18,8 +18,9 @@ export const Config = Schema.object({
   enabled: Schema.boolean().default(true).description('启用右下角模型切换处的波峰/波谷时刻显示'),
   timezone: Schema.string().default(DEFAULTS.timezone).description('判峰谷所用的时区（IANA，如 Asia/Shanghai）'),
   weekendValley: Schema.boolean().default(DEFAULTS.weekendValley).description('周末全天按低谷（波谷）处理'),
-  valleyStart: Schema.string().default(DEFAULTS.valleyStart).description('工作日低谷窗口开始（HH:mm，北京时间）'),
-  valleyEnd: Schema.string().default(DEFAULTS.valleyEnd).description('工作日低谷窗口结束（HH:mm，北京时间）'),
+  peakWindows: Schema.array(
+    Schema.tuple([Schema.string(), Schema.string()]),
+  ).default(DEFAULTS.peakWindows).description('高峰（波峰）时段窗口列表（HH:mm，[start, end)），DeepSeek 官网口径：周一至周五 09:00-12:00、14:00-18:00'),
 }).description('DeepSeek 波峰/波谷时刻（梁文锋时刻 / 梁文谷时刻）')
 
 export function apply(ctx, config = {}) {

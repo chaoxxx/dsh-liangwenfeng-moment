@@ -2,21 +2,31 @@
  * dsh-liangwenfeng-moment 浏览器端装饰逻辑（纯 DOM，不依赖 React 内部）。
  * 由 scripts/build-client.mjs 与 src/wave.js（去掉 export 后）一起拼进 lib/client.js。
  *
- * 视觉方案（v0.2）：
+ * 视觉方案（v0.3）：
  *  1) 对话窗口右下角模型切换按钮右侧常驻彩色箭头：
  *       波峰（梁文锋时刻）→ 红色 ▲   波谷（梁文谷时刻）→ 绿色 ▼
  *  2) 鼠标悬浮（或键盘聚焦）模型按钮/箭头时，弹出浮动面板：
  *       “当前为 梁文锋时刻，距离下一次梁文谷时刻还剩 hh:mm:ss” 每秒动态倒数，
+ *       句中的时刻名称按文字着色（梁文锋时刻→红、梁文谷时刻→绿），
  *       附一行峰谷计价规则说明；相位翻转时自动更新。
- *  3) 切换模型下拉菜单里 DeepSeek 各选项仍追加【…时刻】文本（不会被截断）。
+ *  3) 切换模型下拉菜单里 DeepSeek 各选项仍追加【…时刻】文本（不会被截断，
+ *      后缀文字同样按名称着色：梁文锋时刻→红、梁文谷时刻→绿）。
+ *
+ * 判峰谷规则（DeepSeek 官网口径，北京时间）：
+ *   高峰（波峰）= 周一至周五 09:00–12:00、14:00–18:00；
+ *   其余时间（含周末）= 空闲时段（波谷），价格为高峰的一半。
  */
 
 // ---- 运行时配置（如需调整波峰/波谷规则，改这里即可） ----
+// DeepSeek 官网口径：高峰（波峰）= 北京时间周一至周五 09:00–12:00、14:00–18:00，
+// 其余（含周末）为空闲时段（波谷），空闲价格为高峰的一半。
 const LWFG_CONFIG = {
   timezone: 'Asia/Shanghai',
   weekendValley: true, // 周末全天低谷
-  valleyStart: '00:30', // 工作日低谷开始（北京时间）
-  valleyEnd: '08:30', // 工作日低谷结束
+  peakWindows: [
+    ['09:00', '12:00'], // 工作日早高峰
+    ['14:00', '18:00'], // 工作日晚高峰
+  ],
 }
 
 const LWFG_REFRESH_MS = 1000
@@ -237,13 +247,46 @@ function lwfgRefreshPanel(forcePosition = false) {
     const phase = lwfgPhaseNow()
     const line = lwfgPanel.querySelector('[data-lwfg-line]')
     const sub = lwfgPanel.querySelector('[data-lwfg-sub]')
-    if (line) line.textContent = sentenceOf(new Date(), LWFG_CONFIG)
+    if (line) lwfgRenderColoredSentence(line, sentenceOf(new Date(), LWFG_CONFIG))
     if (sub) sub.textContent = describe(LWFG_CONFIG)
     if (forcePosition || lwfgPanel.style.opacity === '0') {
       lwfgPositionPanel(lwfgAnchor)
     }
     lwfgPanel.style.opacity = '1'
   } catch (_) { /* noop */ }
+}
+
+// 把句子里出现的名称按文字本身着色：梁文锋时刻→红，梁文谷时刻→绿。
+// 其它文字保持普通文本，避免 innerHTML 引入注入/转义问题。
+function lwfgRenderColoredSentence(line, sentence) {
+  const cfg = mergeConfig(LWFG_CONFIG)
+  const peakLabel = cfg.labels.peak
+  const valleyLabel = cfg.labels.valley
+  const key = `${peakLabel}|${valleyLabel}|${sentence}`
+  if (line.__lwfgRendered === key) return
+  line.__lwfgRendered = key
+  const escapeRe = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(`(${escapeRe(peakLabel)}|${escapeRe(valleyLabel)})`, 'g')
+  const tokens = String(sentence).split(pattern)
+  line.textContent = ''
+  for (const token of tokens) {
+    if (!token) continue
+    if (token === peakLabel) {
+      const span = document.createElement('span')
+      span.style.color = LWFG_PEAK_COLOR
+      span.style.fontWeight = 600
+      span.textContent = token
+      line.appendChild(span)
+    } else if (token === valleyLabel) {
+      const span = document.createElement('span')
+      span.style.color = LWFG_VALLEY_COLOR
+      span.style.fontWeight = 600
+      span.textContent = token
+      line.appendChild(span)
+    } else {
+      line.appendChild(document.createTextNode(token))
+    }
+  }
 }
 
 function lwfgShowPanel(button) {
